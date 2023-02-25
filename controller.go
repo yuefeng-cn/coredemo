@@ -8,17 +8,18 @@ import (
 	"time"
 )
 
-func FooControllerHandler(c *framework.Context) err {
+func FooControllerHandler(c *framework.Context) error {
+	// TODO chan struct{} ???
 	finish := make(chan struct{}, 1)
 	panicChain := make(chan struct{}, 1)
 
-	durationCtx, cancel := context.WithTimeout(c.BaseContext(), time.Duration(1*time.Second))
+	durationCtx, cancel := context.WithTimeout(c.BaseContext(), 1*time.Second)
 	defer cancel()
 
 	go func() {
 		defer func() {
 			if p := recover(); p != nil {
-				panicChain <- p
+				panicChain <- p.(struct{})
 			}
 		}()
 		time.Sleep(10 * time.Second)
