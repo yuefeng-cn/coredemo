@@ -2,17 +2,24 @@ package main
 
 import (
 	"coredemo/framework"
+	"coredemo/framework/middleware"
 	"net/http"
+	"time"
 )
 
 func main() {
 	core := framework.NewCore()
+	// core.Use(
+	// 	middleware.Test1(),
+	// 	middleware.Test2())
+	core.Use(middleware.Recovery())
+	core.Use(middleware.Cost())
+	core.Use(middleware.Timeout(3 * time.Second))
+
 	registerRouter(core)
 	server := &http.Server{
-		// 自定义的请求核心处理函数
 		Handler: core,
-		// 监听地址
-		Addr: ":8080",
+		Addr:    ":8888",
 	}
 	server.ListenAndServe()
 }

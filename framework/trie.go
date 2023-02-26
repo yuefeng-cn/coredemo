@@ -5,24 +5,24 @@ import (
 	"strings"
 )
 
-// Tree 代表树结构
+// 代表树结构
 type Tree struct {
 	root *node // 根节点
 }
 
 // 代表节点
 type node struct {
-	isLast   bool              // 该节点是否能成为一个独立的uri, 是否自身就是一个终极节点
-	segment  string            // uri中的字符串
-	handler  ControllerHandler // 控制器
-	children []*node           // 子节点
+	isLast   bool                // 该节点是否能成为一个独立的uri, 是否自身就是一个终极节点
+	segment  string              // uri中的字符串
+	handlers []ControllerHandler // 中间件+控制器
+	childs   []*node             // 子节点
 }
 
 func newNode() *node {
 	return &node{
-		isLast:   false,
-		segment:  "",
-		children: []*node{},
+		isLast:  false,
+		segment: "",
+		childs:  []*node{},
 	}
 }
 
@@ -38,18 +38,18 @@ func isWildSegment(segment string) bool {
 
 // 过滤下一层满足segment规则的子节点
 func (n *node) filterChildNodes(segment string) []*node {
-	if len(n.children) == 0 {
+	if len(n.childs) == 0 {
 		return nil
 	}
 
 	// 如果segment是通配符，则所有下一层子节点都满足需求
 	if isWildSegment(segment) {
-		return n.children
+		return n.childs
 	}
 
-	nodes := make([]*node, 0, len(n.children))
+	nodes := make([]*node, 0, len(n.childs))
 	// 过滤所有的下一层子节点
-	for _, cnode := range n.children {
+	for _, cnode := range n.childs {
 		if isWildSegment(cnode.segment) {
 			// 如果下一层子节点有通配符，则满足需求
 			nodes = append(nodes, cnode)
@@ -72,16 +72,16 @@ func (n *node) matchNode(uri string) *node {
 		segment = strings.ToUpper(segment)
 	}
 	// 匹配符合的下一层子节点
-	cNodes := n.filterChildNodes(segment)
+	cnodes := n.filterChildNodes(segment)
 	// 如果当前子节点没有一个符合，那么说明这个uri一定是之前不存在, 直接返回nil
-	if cNodes == nil || len(cNodes) == 0 {
+	if cnodes == nil || len(cnodes) == 0 {
 		return nil
 	}
 
 	// 如果只有一个segment，则是最后一个标记
 	if len(segments) == 1 {
 		// 如果segment已经是最后一个节点，判断这些cnode是否有isLast标志
-		for _, tn := range cNodes {
+		for _, tn := range cnodes {
 			if tn.isLast {
 				return tn
 			}
@@ -92,7 +92,7 @@ func (n *node) matchNode(uri string) *node {
 	}
 
 	// 如果有2个segment, 递归每个子节点继续进行查找
-	for _, tn := range cNodes {
+	for _, tn := range cnodes {
 		tnMatch := tn.matchNode(segments[1])
 		if tnMatch != nil {
 			return tnMatch
@@ -101,16 +101,16 @@ func (n *node) matchNode(uri string) *node {
 	return nil
 }
 
-// AddRouter 增加路由节点, 路由节点有先后顺序
+// 增加路由节点, 路由节点有先后顺序
 /*
 /book/list
 /book/:id (冲突)
 /book/:id/name
 /book/:student/age
-/:user/name
-/:user/name/:age (冲突)
+/:user/name(冲突)
+/:user/name/:age
 */
-func (tree *Tree) AddRouter(uri string, handler ControllerHandler) error {
+func (tree *Tree) AddRouter(uri string, handlers []ControllerHandler) error {
 	n := tree.root
 	if n.matchNode(uri) != nil {
 		return errors.New("route exist: " + uri)
@@ -146,9 +146,9 @@ func (tree *Tree) AddRouter(uri string, handler ControllerHandler) error {
 			cnode.segment = segment
 			if isLast {
 				cnode.isLast = true
-				cnode.handler = handler
+				cnode.handlers = handlers
 			}
-			n.children = append(n.children, cnode)
+			n.childs = append(n.childs, cnode)
 			objNode = cnode
 		}
 
@@ -158,11 +158,11 @@ func (tree *Tree) AddRouter(uri string, handler ControllerHandler) error {
 	return nil
 }
 
-// FindHandler 匹配uri
-func (tree *Tree) FindHandler(uri string) ControllerHandler {
+// 匹配uri
+func (tree *Tree) FindHandler(uri string) []ControllerHandler {
 	matchNode := tree.root.matchNode(uri)
 	if matchNode == nil {
 		return nil
 	}
-	return matchNode.handler
+	return matchNode.handlers
 }

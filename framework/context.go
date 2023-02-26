@@ -12,26 +12,33 @@ import (
 	"time"
 )
 
+// Context代表当前请求上下文
 type Context struct {
 	request        *http.Request
 	responseWriter http.ResponseWriter
 	ctx            context.Context
-	handler        ControllerHandler
 
 	// 是否超时标记位
 	hasTimeout bool
-	// 写保护机制
-	writerMux *sync.Mutex
+	writerMux  *sync.Mutex
+
+	// 当前请求的handler链条
+	handlers []ControllerHandler
+	index    int // 当前请求调用到调用链的哪个节点
 }
 
+// NewContext 初始化一个Context
 func NewContext(r *http.Request, w http.ResponseWriter) *Context {
 	return &Context{
 		request:        r,
 		responseWriter: w,
 		ctx:            r.Context(),
 		writerMux:      &sync.Mutex{},
+		index:          -1,
 	}
 }
+
+// #region base function
 
 func (ctx *Context) WriterMux() *sync.Mutex {
 	return ctx.writerMux
@@ -52,6 +59,24 @@ func (ctx *Context) SetHasTimeout() {
 func (ctx *Context) HasTimeout() bool {
 	return ctx.hasTimeout
 }
+
+// 为context设置handlers
+func (ctx *Context) SetHandlers(handlers []ControllerHandler) {
+	ctx.handlers = handlers
+}
+
+// 核心函数，调用context的下一个函数
+func (ctx *Context) Next() error {
+	ctx.index++
+	if ctx.index < len(ctx.handlers) {
+		if err := ctx.handlers[ctx.index](ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// #endregion
 
 func (ctx *Context) BaseContext() context.Context {
 	return ctx.request.Context()
@@ -74,15 +99,9 @@ func (ctx *Context) Value(key interface{}) interface{} {
 	return ctx.BaseContext().Value(key)
 }
 
-// 以下是从GET中读取参数
+// #endregion
 
-func (ctx *Context) QueryAll() map[string][]string {
-	if ctx.request != nil {
-		return map[string][]string(ctx.request.URL.Query())
-	}
-	return map[string][]string{}
-}
-
+// #region query url
 func (ctx *Context) QueryInt(key string, def int) int {
 	params := ctx.QueryAll()
 	if vals, ok := params[key]; ok {
@@ -117,15 +136,16 @@ func (ctx *Context) QueryArray(key string, def []string) []string {
 	return def
 }
 
-// 以下是从POST表单中读取参数
-
-func (ctx *Context) FormAll() map[string][]string {
+func (ctx *Context) QueryAll() map[string][]string {
 	if ctx.request != nil {
-		return map[string][]string(ctx.request.PostForm)
+		return map[string][]string(ctx.request.URL.Query())
 	}
 	return map[string][]string{}
 }
 
+// #endregion
+
+// #region form post
 func (ctx *Context) FormInt(key string, def int) int {
 	params := ctx.FormAll()
 	if vals, ok := params[key]; ok {
@@ -160,16 +180,23 @@ func (ctx *Context) FormArray(key string, def []string) []string {
 	return def
 }
 
-// application/json post
+func (ctx *Context) FormAll() map[string][]string {
+	if ctx.request != nil {
+		return map[string][]string(ctx.request.PostForm)
+	}
+	return map[string][]string{}
+}
+
+// #endregion
+
+// #region application/json post
 
 func (ctx *Context) BindJson(obj interface{}) error {
-	// TODO 用卫语句更顺眼点
 	if ctx.request != nil {
 		body, err := ioutil.ReadAll(ctx.request.Body)
 		if err != nil {
 			return err
 		}
-		// TODO 这里是不是写错了，closer不关闭？
 		ctx.request.Body = ioutil.NopCloser(bytes.NewBuffer(body))
 
 		err = json.Unmarshal(body, obj)
@@ -177,14 +204,16 @@ func (ctx *Context) BindJson(obj interface{}) error {
 			return err
 		}
 	} else {
-		return errors.New("Cannot BindJSON: ctx.request empty")
+		return errors.New("ctx.request empty")
 	}
 	return nil
 }
 
-// 设置响应结果
+// #endregion
+
+// #region response
+
 func (ctx *Context) Json(status int, obj interface{}) error {
-	// 如果请求超时，那就不需要再往响应体中写任何东西了
 	if ctx.HasTimeout() {
 		return nil
 	}
@@ -193,6 +222,7 @@ func (ctx *Context) Json(status int, obj interface{}) error {
 	byt, err := json.Marshal(obj)
 	if err != nil {
 		ctx.responseWriter.WriteHeader(500)
+		return err
 	}
 	ctx.responseWriter.Write(byt)
 	return nil
@@ -205,3 +235,5 @@ func (ctx *Context) HTML(status int, obj interface{}, template string) error {
 func (ctx *Context) Text(status int, obj string) error {
 	return nil
 }
+
+// #endregion
